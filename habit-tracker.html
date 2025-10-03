@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Habit Tracker - Firebase Sync</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.22.0/firebase-app-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.22.0/firebase-firestore-compat.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/9.22.0/firebase-auth-compat.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .checkbox-custom {
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #d1d5db;
+            border-radius: 4px;
+            cursor: pointer;
+            position: relative;
+        }
+        .checkbox-custom:checked {
+            background-color: #10b981;
+            border-color: #10b981;
+        }
+        .checkbox-custom:checked::after {
+            content: '✓';
+            position: absolute;
+            color: white;
+            font-size: 14px;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f4f6;
+            border-radius: 50%;
+            border-top-color: #4f46e5;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-blue-50 to-indigo-100 min-h-screen">
+    <div id="app" class="p-4 max-w-7xl mx-auto"></div>
+
+    <script>
+        // ============================================
+        // FIREBASE CONFIGURATION
+        // ============================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCXBMFJbzE_JHu9IuemEh0BXJMxn6srRmE",
+            authDomain: "habit-tracker-b72cb.firebaseapp.com",
+            projectId: "habit-tracker-b72cb",
+            storageBucket: "habit-tracker-b72cb.firebasestorage.app",
+            messagingSenderId: "52094440153",
+            appId: "1:52094440153:web:e796bb33d1b50c4bd2e4c8",
+            measurementId: "G-0X04LDT2MM"
+        };
+
+        // Initialize Firebase
+        let db;
+        let auth;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.firestore();
+            auth = firebase.auth();
+            console.log("Firebase initialized successfully");
+        } catch (error) {
+            console.error("Firebase initialization error:", error);
+        }
+
+        // ============================================
+        // APP STATE
+        // ============================================
+        let state = {
+            currentDate: new Date(),
+            activeTab: 'tracker',
+            habits: [],
+            editingId: null,
+            editValue: '',
+            loading: true,
+            userId: null,
+            user: null,
+            unsubscribe: null
+        };
+
+        // ============================================
+        // AUTH FUNCTIONS
+        // ============================================
+        function renderLoginScreen() {
+            const app = document.getElementById('app');
+            app.innerHTML = `
+                <div class="flex items-center justify-center min-h-screen">
+                    <div class="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
+                        <div class="text-center mb-8">
+                            <h1 class="text-4xl font-bold text-gray-800 mb-2">Habit Tracker</h1>
+                            <p class="text-gray-600">Track your habits across all devices</p>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <button
+                                id="googleSignInBtn"
+                                class="w-full flex items-center justify-center gap-3 bg-white border-2 border-gray-300 text-gray-700 px-6 py-3 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition font-medium"
+                            >
+                                <svg width="20" height="20" viewBox="0 0 20 20">
+                                    <path fill="#4285F4" d="M19.6 10.23c0-.82-.1-1.42-.25-2.05H10v3.72h5.5c-.15.96-.74 2.31-2.04 3.22v2.45h3.16c1.89-1.73 2.98-4.3 2.98-7.34z"/>
+                                    <path fill="#34A853" d="M13.46 15.13c-.83.59-1.96 1-3.46 1-2.64 0-4.88-1.74-5.68-4.15H1.07v2.52C2.72 17.75 6.09 20 10 20c2.7 0 4.96-.89 6.62-2.42l-3.16-2.45z"/>
+                                    <path fill="#FBBC05" d="M3.99 10c0-.69.12-1.35.32-1.97V5.51H1.07A9.973 9.973 0 000 10c0 1.61.39 3.14 1.07 4.49l3.24-2.52c-.2-.62-.32-1.28-.32-1.97z"/>
+                                    <path fill="#EA4335" d="M10 3.88c1.88 0 3.13.81 3.85 1.48l2.84-2.76C14.96.99 12.7 0 10 0 6.09 0 2.72 2.25 1.07 5.51l3.24 2.52C5.12 5.62 7.36 3.88 10 3.88z"/>
+                                </svg>
+                                Sign in with Google
+                            </button>
+
+                            <div class="text-center text-sm text-gray-500 mt-6">
+                                <p>✓ Sync across all devices</p>
+                                <p>✓ Secure & Private</p>
+                                <p>✓ Always backed up</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            // Attach sign in button listener
+            const signInBtn = document.getElementById('googleSignInBtn');
+            if (signInBtn) {
+                signInBtn.addEventListener('click', signInWithGoogle);
+            }
+        }
+
+        async function signInWithGoogle() {
+            try {
+                const provider = new firebase.auth.GoogleAuthProvider();
+                await auth.signInWithPopup(provider);
+                console.log("Signed in successfully");
+            } catch (error) {
+                console.error("Sign in error:", error);
+                alert("Sign in failed: " + error.message);
+            }
+        }
+
+        async function signOut() {
+            try {
+                // Unsubscribe from real-time updates
+                if (state.unsubscribe) {
+                    state.unsubscribe();
+                    state.unsubscribe = null;
+                }
+                
+                await auth.signOut();
+                state.userId = null;
+                state.user = null;
+                state.habits = [];
+                console.log("Signed out successfully");
+            } catch (error) {
+                console.error("Sign out error:", error);
+            }
+        }
+
+        // Listen for auth state changes
+        auth.onAuthStateChanged((user) => {
+            if (user) {
+                console.log("User signed in:", user.email);
+                state.user = user;
+                state.userId = user.uid;
+                state.loading = true;
+                loadHabitsFromFirebase();
+            } else {
+                console.log("User signed out");
+                state.user = null;
+                state.userId = null;
+                renderLoginScreen();
+            }
+        });
+
+        // ============================================
+        // FIREBASE FUNCTIONS
+        // ============================================
+        async function loadHabitsFromFirebase() {
+            if (!db || !state.userId) {
+                state.loading = false;
+                render();
+                return;
+            }
+            try {
+                const snapshot = await db.collection('habits')
+                    .where('userId', '==', state.userId)
+                    .get();
+                
+                state.habits = snapshot.docs.map(doc => ({
+                    firebaseId: doc.id,
+                    ...doc.data()
+                }));
+                
+                console.log("Loaded habits:", state.habits.length);
+                state.loading = false;
+                render();
+                
+                // Setup real-time sync after initial load
+                setupRealtimeSync();
+            } catch (error) {
+                console.error("Error loading habits:", error);
+                state.loading = false;
+                render();
+            }
+        }
+
+        // Real-time sync listener
+        function setupRealtimeSync() {
+            if (!db || !state.userId) return;
+            
+            // Unsubscribe from previous listener if exists
+            if (state.unsubscribe) {
+                state.unsubscribe();
+            }
+            
+            state.unsubscribe = db.collection('habits')
+                .where('userId', '==', state.userId)
+                .onSnapshot((snapshot) => {
+                    console.log("Real-time update received - " + snapshot.docs.length + " habits");
+                    
+                    state.habits = snapshot.docs.map(doc => ({
+                        firebaseId: doc.id,
+                        ...doc.data()
+                    }));
+                    
+                    render();
+                }, (error) => {
+                    console.error("Error in real-time sync:", error);
+                });
+        }
+
+        async function saveHabitToFirebase(habit) {
+            if (!db || !state.userId) return;
+            try {
+                const habitData = {
+                    id: habit.id,
+                    name: habit.name,
+                    completions: habit.completions || {},
+                    userId: state.userId,
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                };
+                
+                if (habit.firebaseId) {
+                    await db.collection('habits').doc(habit.firebaseId).update(habitData);
+                    console.log("Updated habit:", habit.name);
+                } else {
+                    const docRef = await db.collection('habits').add(habitData);
+                    console.log("Added habit:", habit.name);
+                    return docRef.id;
+                }
+            } catch (error) {
+                console.error("Error saving habit:", error);
+            }
+        }
+
+        async function deleteHabitFromFirebase(firebaseId) {
+            if (!db || !firebaseId) return;
+            try {
+                await db.collection('habits').doc(firebaseId).delete();
+                console.log("Deleted habit with ID:", firebaseId);
+            } catch (error) {
+                console.error("Error deleting habit:", error);
+            }
+        }
+
+        // ============================================
+        // HABIT FUNCTIONS
+        // ============================================
+        function getDaysInMonth() {
+            const year = state.currentDate.getFullYear();
+            const month = state.currentDate.getMonth();
+            return new Date(year, month + 1, 0).getDate();
+        }
+
+        function getMonthKey() {
+            return `${state.currentDate.getFullYear()}-${state.currentDate.getMonth()}`;
+        }
+
+        async function toggleCompletion(habitId, day) {
+            const habitIndex = state.habits.findIndex(h => h.id === habitId);
+            if (habitIndex === -1) return;
+
+            const habit = state.habits[habitIndex];
+            const key = `${getMonthKey()}-${day}`;
+            
+            if (!habit.completions) {
+                habit.completions = {};
+            }
+            
+            habit.completions[key] = !habit.completions[key];
+            
+            console.log(`Toggled ${habit.name} for day ${day}:`, habit.completions[key]);
+            
+            await saveHabitToFirebase(habit);
+        }
+
+        function isCompleted(habitId, day) {
+            const habit = state.habits.find(h => h.id === habitId);
+            if (!habit || !habit.completions) return false;
+            const key = `${getMonthKey()}-${day}`;
+            return habit.completions[key] === true;
+        }
+
+        async function deleteHabit(habitId) {
+            const habit = state.habits.find(h => h.id === habitId);
+            if (!habit) return;
+            
+            if (window.confirm(`Are you sure you want to delete "${habit.name}"?`)) {
+                await deleteHabitFromFirebase(habit.firebaseId);
+                console.log("Deleted habit from state");
+            }
+        }
+
+        function startEdit(habitId) {
+            const habit = state.habits.find(h => h.id === habitId);
+            if (!habit) return;
+            
+            state.editingId = habitId;
+            state.editValue = habit.name;
+            render();
+            
+            setTimeout(() => {
+                const input = document.getElementById('editInput');
+                if (input) input.focus();
+            }, 0);
+        }
+
+        async function saveEdit(habitId) {
+            const input = document.getElementById('editInput');
+            const newName = input ? input.value.trim() : state.editValue.trim();
+            
+            if (!newName) {
+                cancelEdit();
+                return;
+            }
+            
+            const habit = state.habits.find(h => h.id === habitId);
+            if (habit) {
+                habit.name = newName;
+                await saveHabitToFirebase(habit);
+                console.log("Saved edit:", newName);
+            }
+            
+            state.editingId = null;
+            state.editValue = '';
+        }
+
+        function cancelEdit() {
+            state.editingId = null;
+            state.editValue = '';
+            render();
+        }
+
+        function getCompletionCount(habitId) {
+            const habit = state.habits.find(h => h.id === habitId);
+            if (!habit || !habit.completions) return 0;
+            
+            const monthKey = getMonthKey();
+            return Object.keys(habit.completions).filter(key => 
+                key.startsWith(monthKey) && habit.completions[key] === true
+            ).length;
+        }
+
+        function getCompletionPercentage(habitId) {
+            const count = getCompletionCount(habitId);
+            const total = getDaysInMonth();
+            return Math.round((count / total) * 100);
+        }
+
+        function changeMonth(direction) {
+            state.currentDate = new Date(
+                state.currentDate.getFullYear(),
+                state.currentDate.getMonth() + direction,
+                1
+            );
+            render();
+        }
+
+        // ============================================
+        // RENDER FUNCTIONS
+        // ============================================
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function render() {
+            if (!state.user) {
+                return; // Login screen is already rendered
+            }
+
+            const app = document.getElementById('app');
+            const month = state.currentDate.toLocaleString('default', { month: 'long' });
+            const year = state.currentDate.getFullYear();
+            const daysInMonth = getDaysInMonth();
+
+            if (state.loading) {
+                app.innerHTML = `
+                    <div class="flex items-center justify-center min-h-screen">
+                        <div class="text-center">
+                            <div class="loading mx-auto mb-4"></div>
+                            <p class="text-gray-600">Loading your habits...</p>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            app.innerHTML = `
+                <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                    <div class="flex items-center justify-between mb-4 flex-wrap gap-4">
+                        <h1 class="text-3xl font-bold text-gray-800">Habit Tracker</h1>
+                        <div class="flex items-center gap-4">
+                            <div class="flex items-center gap-2">
+                                <img src="${state.user.photoURL}" alt="Profile" class="w-8 h-8 rounded-full">
+                                <span class="text-sm text-gray-600">${state.user.email}</span>
+                            </div>
+                            <button id="signOutBtn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 text-sm">
+                                Sign Out
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-4 flex-wrap gap-4">
+                        <div class="flex gap-2">
+                            <button onclick="window.setActiveTab('tracker')" class="px-4 py-2 rounded-lg font-medium transition ${
+                                state.activeTab === 'tracker'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }">
+                                Tracker
+                            </button>
+                            <button onclick="window.setActiveTab('dashboard')" class="px-4 py-2 rounded-lg font-medium transition ${
+                                state.activeTab === 'dashboard'
+                                    ? 'bg-indigo-600 text-white'
+                                    : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }">
+                                📊 Dashboard
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center justify-center gap-4">
+                        <button onclick="window.changeMonth(-1)" class="px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                            ←
+                        </button>
+                        <h2 class="text-2xl font-semibold text-indigo-600">
+                            ${month} ${year}
+                        </h2>
+                        <button onclick="window.changeMonth(1)" class="px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">
+                            →
+                        </button>
+                    </div>
+                    <div class="text-center mt-2 text-sm text-green-600 font-medium">
+                        ✓ Synced across all devices
+                    </div>
+                </div>
+
+                ${state.activeTab === 'tracker' ? renderTracker(daysInMonth) : renderDashboard(daysInMonth)}
+            `;
+
+            // Attach event listeners after render
+            attachEventListeners();
+        }
+
+        function renderTracker(daysInMonth) {
+            return `
+                <div class="bg-white rounded-lg shadow-lg p-4 mb-6">
+                    <div class="flex gap-2">
+                        <input
+                            type="text"
+                            id="newHabitInput"
+                            placeholder="Add new habit..."
+                            class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        />
+                        <button
+                            id="addHabitBtn"
+                            class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                        >
+                            ➕ Add
+                        </button>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-lg shadow-lg overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full">
+                            <thead class="bg-indigo-600 text-white sticky top-0 z-10">
+                                <tr>
+                                    <th class="sticky left-0 bg-indigo-600 px-4 py-3 text-left font-semibold min-w-[200px]">
+                                        HABITS
+                                    </th>
+                                    ${Array.from({ length: daysInMonth }, (_, i) => `
+                                        <th class="px-2 py-3 text-center font-semibold min-w-[40px]">${i + 1}</th>
+                                    `).join('')}
+                                    <th class="px-4 py-3 text-center font-semibold min-w-[100px]">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${state.habits.map((habit, index) => `
+                                    <tr class="${index % 2 === 0 ? 'bg-gray-50' : 'bg-white'}">
+                                        <td class="sticky left-0 px-4 py-3 font-medium text-gray-800 border-r border-gray-200 bg-inherit">
+                                            ${state.editingId === habit.id ? `
+                                                <div class="flex items-center gap-2">
+                                                    <input
+                                                        type="text"
+                                                        id="editInput"
+                                                        value="${escapeHtml(state.editValue)}"
+                                                        class="flex-1 px-2 py-1 border border-indigo-500 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    />
+                                                    <button data-save-edit="${habit.id}" class="text-green-600 hover:text-green-700 text-xl">✓</button>
+                                                    <button data-cancel-edit class="text-red-600 hover:text-red-700 text-xl">✕</button>
+                                                </div>
+                                            ` : escapeHtml(habit.name)}
+                                        </td>
+                                        ${Array.from({ length: daysInMonth }, (_, day) => `
+                                            <td class="px-2 py-3 text-center">
+                                                <input
+                                                    type="checkbox"
+                                                    class="checkbox-custom"
+                                                    data-habit-id="${habit.id}"
+                                                    data-day="${day + 1}"
+                                                    ${isCompleted(habit.id, day + 1) ? 'checked' : ''}
+                                                />
+                                            </td>
+                                        `).join('')}
+                                        <td class="px-4 py-3 text-center">
+                                            <div class="flex items-center justify-center gap-2">
+                                                <button
+                                                    data-edit-habit="${habit.id}"
+                                                    class="text-blue-600 hover:text-blue-700 p-1 text-xl"
+                                                    title="Edit"
+                                                >✏️</button>
+                                                <button
+                                                    data-delete-habit="${habit.id}"
+                                                    class="text-red-600 hover:text-red-700 p-1 text-xl"
+                                                    title="Delete"
+                                                >🗑️</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderDashboard(daysInMonth) {
+            const avgCompletion = state.habits.length > 0
+                ? Math.round(state.habits.reduce((sum, h) => sum + getCompletionPercentage(h.id), 0) / state.habits.length)
+                : 0;
+
+            return `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h3 class="text-lg font-semibold text-gray-700 mb-2">Total Habits</h3>
+                            <p class="text-4xl font-bold text-indigo-600">${state.habits.length}</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h3 class="text-lg font-semibold text-gray-700 mb-2">Avg Completion</h3>
+                            <p class="text-4xl font-bold text-green-600">${avgCompletion}%</p>
+                        </div>
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h3 class="text-lg font-semibold text-gray-700 mb-2">Days in Month</h3>
+                            <p class="text-4xl font-bold text-purple-600">${daysInMonth}</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-lg shadow-lg p-6">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">Habits Progress</h3>
+                        <div class="space-y-4">
+                            ${state.habits.map(habit => {
+                                const count = getCompletionCount(habit.id);
+                                const percentage = getCompletionPercentage(habit.id);
+                                return `
+                                    <div class="space-y-2">
+                                        <div class="flex justify-between items-center">
+                                            <span class="font-medium text-gray-700">${escapeHtml(habit.name)}</span>
+                                            <span class="text-sm text-gray-600">${count} / ${daysInMonth} days (${percentage}%)</span>
+                                        </div>
+                                        <div class="w-full bg-gray-200 rounded-full h-4">
+                                            <div class="bg-gradient-to-r from-green-500 to-green-600 h-4 rounded-full transition-all duration-300"
+                                                 style="width: ${percentage}%"></div>
+                                        </div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+
+                    <div class="bg-white rounded-lg shadow-lg p-6">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4">Completion Chart</h3>
+                        <div class="flex items-end justify-around h-64 border-b border-l border-gray-300">
+                            ${state.habits.map(habit => {
+                                const percentage = getCompletionPercentage(habit.id);
+                                return `
+                                    <div class="flex flex-col items-center gap-2 flex-1 mx-2">
+                                        <div class="text-sm font-semibold text-gray-700">${percentage}%</div>
+                                        <div class="w-full bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-t transition-all duration-500"
+                                             style="height: ${percentage}%"></div>
+                                        <div class="text-xs text-gray-600 text-center mt-2 max-w-[100px] truncate">${escapeHtml(habit.name)}</div>
+                                    </div>
+                                `;
+                            }).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ============================================
+        // EVENT LISTENERS
+        // ============================================
+        function attachEventListeners() {
+            // Sign out button
+            const signOutBtn = document.getElementById('signOutBtn');
+            if (signOutBtn) {
+                signOutBtn.addEventListener('click', signOut);
+            }
+
+            // Add habit button
+            const addBtn = document.getElementById('addHabitBtn');
+            if (addBtn) {
+                addBtn.addEventListener('click', async () => {
+                    const input = document.getElementById('newHabitInput');
+                    if (input && input.value.trim()) {
+                        const habitName = input.value.trim();
+                        
+                        const newId = Math.max(...state.habits.map(h => h.id), 0) + 1;
+                        const newHabit = {
+                            id: newId,
+                            name: habitName,
+                            completions: {},
+                            userId: state.userId
+                        };
+                        
+                        const firebaseId = await saveHabitToFirebase(newHabit);
+                        newHabit.firebaseId = firebaseId;
+                        
+                        input.value = '';
+                    }
+                });
+            }
+
+            // Add habit on Enter key
+            const input = document.getElementById('newHabitInput');
+            if (input) {
+                input.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        const addBtn = document.getElementById('addHabitBtn');
+                        if (addBtn) addBtn.click();
+                    }
+                });
+            }
+
+            // Checkboxes
+            document.querySelectorAll('.checkbox-custom').forEach(checkbox => {
+                checkbox.addEventListener('change', async (e) => {
+                    const habitId = parseInt(e.target.dataset.habitId);
+                    const day = parseInt(e.target.dataset.day);
+                    await toggleCompletion(habitId, day);
+                });
+            });
+
+            // Edit buttons
+            document.querySelectorAll('[data-edit-habit]').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const habitId = parseInt(e.currentTarget.dataset.editHabit);
+                    startEdit(habitId);
+                });
+            });
+
+            // Delete buttons
+            document.querySelectorAll('[data-delete-habit]').forEach(btn => {
+                btn.addEventListener('click', async (e) => {
+                    const habitId = parseInt(e.currentTarget.dataset.deleteHabit);
+                    await deleteHabit(habitId);
+                });
+            });
+
+            // Save edit button
+            const saveBtn = document.querySelector('[data-save-edit]');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', async (e) => {
+                    const habitId = parseInt(e.currentTarget.dataset.saveEdit);
+                    await saveEdit(habitId);
+                });
+            }
+
+            // Cancel edit button
+            const cancelBtn = document.querySelector('[data-cancel-edit]');
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', () => {
+                    cancelEdit();
+                });
+            }
+
+            // Save edit on Enter
+            const editInput = document.getElementById('editInput');
+            if (editInput) {
+                editInput.addEventListener('keypress', async (e) => {
+                    if (e.key === 'Enter') {
+                        const habitId = state.editingId;
+                        await saveEdit(habitId);
+                    }
+                });
+            }
+        }
+
+        // ============================================
+        // GLOBAL FUNCTIONS
+        // ============================================
+        window.setActiveTab = (tab) => {
+            state.activeTab = tab;
+            render();
+        };
+
+        window.changeMonth = (direction) => {
+            changeMonth(direction);
+        };
+
+        // ============================================
+        // INITIALIZE APP
+        // ============================================
+        // App will initialize via auth.onAuthStateChanged listener
+    </script>
+</body>
+</html>
